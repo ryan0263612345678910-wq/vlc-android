@@ -2185,7 +2185,9 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
                 } ?: return false
                 legacy.invoke(player, if (enable) directory else null)
             }
-            result as? Boolean ?: true
+            // Do not report success when the API returns void/null: that only means
+            // reflection invoked a method, not that LibVLC started recording.
+            result is Boolean && result
         } catch (e: Exception) {
             Log.e(TAG, "Failed to control LibVLC recording", e)
             false
