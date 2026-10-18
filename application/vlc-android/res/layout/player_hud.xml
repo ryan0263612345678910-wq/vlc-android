@@ -328,11 +328,30 @@
                     android:scaleType="center"
                     tools:visibility="visible"
                     vlc:layout_constraintBottom_toBottomOf="@+id/player_overlay_play"
-                    vlc:layout_constraintEnd_toStartOf="@+id/orientation_toggle"
+                    vlc:layout_constraintEnd_toStartOf="@+id/player_overlay_record"
                     vlc:layout_constraintHorizontal_chainStyle="spread_inside"
                     vlc:layout_constraintStart_toStartOf="parent"
                     vlc:layout_constraintTop_toTopOf="@+id/player_overlay_play"
                     vlc:srcCompat="@drawable/ic_player_audiotrack" />
+
+            <ImageView
+                    android:id="@+id/player_overlay_record"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/small_margins_sides"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:contentDescription="@string/start_recording"
+                    android:focusable="true"
+                    android:onClick="@{player::toggleRecording}"
+                    android:scaleType="center"
+                    android:visibility="gone"
+                    tools:visibility="visible"
+                    vlc:layout_constraintBottom_toBottomOf="@+id/player_overlay_play"
+                    vlc:layout_constraintEnd_toStartOf="@+id/orientation_toggle"
+                    vlc:layout_constraintStart_toEndOf="@+id/player_overlay_record"
+                    vlc:layout_constraintTop_toTopOf="@+id/player_overlay_play"
+                    vlc:srcCompat="@drawable/ic_record" />
 
             <ImageView
                     android:id="@+id/orientation_toggle"
