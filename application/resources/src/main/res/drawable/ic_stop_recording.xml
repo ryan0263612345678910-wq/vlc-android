@@ -7,7 +7,7 @@
         android:fillColor="#00000000"
         android:strokeColor="?attr/player_icon_color"
         android:strokeWidth="3"
-        android:pathData="M18,4A14,14 0,1 0,18 32A14,14 0,1 0,18 4" />
+        android:pathData="M18,3C9.716,3 3,9.716 3,18s6.716,15 15,15 15,-6.716 15,-15S26.284,3 18,3z" />
     <path
         android:fillColor="?attr/player_icon_color"
         android:pathData="M13,13h10v10H13z" />
