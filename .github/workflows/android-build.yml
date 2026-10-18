@@ -33,5 +33,8 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | sdkmanager --licenses || true
 
+      - name: Create local Android SDK configuration
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
       - name: Build VLC Android debug variant
         run: ./gradlew :application:vlc-android:assembleDebug --stacktrace
