@@ -343,13 +343,13 @@
                     android:clickable="true"
                     android:contentDescription="@string/start_recording"
                     android:focusable="true"
-                    android:onClick="@{(v) -> player.toggleRecording()}
+                    android:onClick="@{(v) -> player.toggleRecording()}"
                     android:scaleType="center"
                     android:visibility="gone"
                     tools:visibility="visible"
                     vlc:layout_constraintBottom_toBottomOf="@+id/player_overlay_play"
                     vlc:layout_constraintEnd_toStartOf="@+id/orientation_toggle"
-                    vlc:layout_constraintStart_toEndOf="@+id/player_overlay_record"
+                    vlc:layout_constraintStart_toEndOf="@+id/player_overlay_tracks"
                     vlc:layout_constraintTop_toTopOf="@+id/player_overlay_play"
                     vlc:srcCompat="@drawable/ic_record" />
 
@@ -366,7 +366,7 @@
                     tools:visibility="visible"
                     vlc:layout_constraintBottom_toBottomOf="@+id/player_overlay_play"
                     vlc:layout_constraintEnd_toStartOf="@+id/player_space_left"
-                    vlc:layout_constraintStart_toEndOf="@+id/player_overlay_tracks"
+                    vlc:layout_constraintStart_toEndOf="@+id/player_overlay_record"
                     vlc:layout_constraintTop_toTopOf="@+id/player_overlay_play"
                     vlc:srcCompat="@drawable/ic_player_rotate" />
 
