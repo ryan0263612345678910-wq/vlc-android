@@ -44,5 +44,8 @@ jobs:
       - name: Create local Android SDK configuration
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Build VLC Android debug variant
-        run: ./gradlew :application:vlc-android:assembleDebug --stacktrace
+        run: gradle :application:vlc-android:assembleDebug --stacktrace
