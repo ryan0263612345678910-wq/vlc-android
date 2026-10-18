@@ -23,7 +23,7 @@ jobs:
         run: |
           if [ ! -d libvlcjni/.git ]; then
             rm -rf libvlcjni
-            git clone --depth 1 --branch libvlcjni-4.x https://code.videolan.org/videolan/libvlcjni.git libvlcjni
+            git clone --depth 1 --branch master https://code.videolan.org/videolan/libvlcjni.git libvlcjni
           else
             echo "LibVLC JNI sources already checked out"
           fi
