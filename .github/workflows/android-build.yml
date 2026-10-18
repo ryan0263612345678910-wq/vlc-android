@@ -57,16 +57,16 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build VLC Android debug variant
-        run: gradle :application:vlc-android:assembleDebug --stacktrace
+      - name: Build VLC Android application APK
+        run: gradle :application:app:assembleDebug --stacktrace
 
       - name: Locate generated APKs
         if: always()
         run: |
           echo "Searching for generated APK files..."
-          find . -type f -name "*.apk" -print
+          find application/app/build/outputs -type f -name "*.apk" -print 2>/dev/null || true
           mkdir -p artifacts
-          find . -type f -name "*.apk" -not -path "./artifacts/*" -exec cp {} artifacts/ \; 
+          find application/app/build/outputs -type f -name "*.apk" -exec cp {} artifacts/ \; 2>/dev/null || true
           echo "APK files copied to artifacts/:"
           ls -lah artifacts || true
 
