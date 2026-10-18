@@ -23,7 +23,7 @@ jobs:
         run: |
           if [ ! -d libvlcjni/.git ]; then
             rm -rf libvlcjni
-            git clone --depth 1 --branch libvlcjni-3.x https://code.videolan.org/videolan/libvlcjni.git libvlcjni
+            git clone --depth 1 --branch libvlcjni-4.x https://code.videolan.org/videolan/libvlcjni.git libvlcjni
           else
             echo "LibVLC JNI sources already checked out"
           fi
@@ -49,7 +49,7 @@ jobs:
             exit 1
           fi
           yes | "$SDKMANAGER" --licenses || true
-          "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;21.4.7075529"
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
 
       - name: Create local Android SDK configuration
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
@@ -57,8 +57,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build VLC Android application APK
-        run: gradle :application:app:assembleDebug --stacktrace
+      - name: Build VLC Android application APK with LibVLC 4 recording API
+        run: gradle -PforceVlc4=true :application:app:assembleDebug --stacktrace
 
       - name: Locate generated APKs
         if: always()
