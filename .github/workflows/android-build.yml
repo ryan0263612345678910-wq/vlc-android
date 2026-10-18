@@ -25,13 +25,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools, platforms;android-36, build-tools;36.0.0, ndk;21.4.7075529'
-
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses || true
+      - name: Install required Android SDK packages
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;21.4.7075529"
 
       - name: Create local Android SDK configuration
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
