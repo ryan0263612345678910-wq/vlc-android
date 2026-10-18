@@ -59,3 +59,11 @@ jobs:
 
       - name: Build VLC Android debug variant
         run: gradle :application:vlc-android:assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VLC-Android-debug-APK
+          path: application/vlc-android/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 7
