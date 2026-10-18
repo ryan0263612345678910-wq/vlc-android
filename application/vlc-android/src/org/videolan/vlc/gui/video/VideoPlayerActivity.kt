@@ -40,6 +40,7 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
@@ -337,6 +338,8 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
      * (e.g. lock screen, or to restore the pause state)
      */
     private var playbackStarted = false
+    private var isRecording = false
+    private var recordingPlayer: MediaPlayer? = null
 
     // Navigation handling (DVD, Blu-Ray...)
     var menuIdx = -1
@@ -964,6 +967,7 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
 
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
     override fun onStop() {
+        stopRecording(showToast = false)
         super.onStop()
         service?.playlistManager?.let {
             savedMediaList = ArrayList(it.getMediaList())
@@ -1020,6 +1024,7 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
     }
 
     override fun onDestroy() {
+        stopRecording(showToast = false)
         super.onDestroy()
         playlistModel?.run {
             dataset.removeObserver(playlistObserver)
@@ -1577,9 +1582,14 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
     override fun onMediaPlayerEvent(event: MediaPlayer.Event) {
         service?.let { service ->
             when (event.type) {
-                MediaPlayer.Event.Playing -> onPlaying()
+                MediaPlayer.Event.Playing -> {
+                    onPlaying()
+                    updateRecordingButton()
+                }
                 MediaPlayer.Event.Paused -> overlayDelegate.updateOverlayPausePlay()
                 MediaPlayer.Event.Opening -> {
+                    stopRecording(showToast = false)
+                    updateRecordingButton()
                     forcedTime = -1
                     if (!subtitlesExtraPath.isNullOrEmpty()) {
                         service.addSubtitleTrack(subtitlesExtraPath!!, true)
@@ -2083,6 +2093,103 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
 
     private fun showNavMenu() {
         if (menuIdx >= 0) service?.titleIdx = menuIdx
+    }
+
+    /**
+     * Starts or stops LibVLC's native stream recording for HLS media.
+     * Recordings are written to the app-specific Movies directory, so no
+     * broad storage permission is required.
+     */
+    fun toggleRecording() {
+        if (isRecording) {
+            stopRecording(showToast = true)
+            return
+        }
+
+        val currentPlayer = service?.mediaplayer
+        if (currentPlayer == null || !isCurrentMediaHls()) {
+            Toast.makeText(this, R.string.recording_hls_only, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val parent = getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: File(filesDir, "Movies")
+        val directory = File(parent, "VLC Recordings")
+        if (!directory.isDirectory && !directory.mkdirs()) {
+            Toast.makeText(this, R.string.recording_directory_failed, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        if (!invokeRecordingApi(currentPlayer, directory.absolutePath, enable = true)) {
+            Toast.makeText(this, R.string.recording_failed, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        isRecording = true
+        recordingPlayer = currentPlayer
+        updateRecordingButton()
+        Toast.makeText(this, R.string.recording_started, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun isCurrentMediaHls(): Boolean {
+        val location = service?.currentMediaWrapper?.uri?.toString() ?: return false
+        val path = location.substringBefore('?').substringBefore('#')
+        return path.endsWith(".m3u8", ignoreCase = true)
+    }
+
+    private fun updateRecordingButton() {
+        val button = findViewById<ImageView>(R.id.player_overlay_record) ?: return
+        button.visibility = if (isCurrentMediaHls()) View.VISIBLE else View.GONE
+        button.isActivated = isRecording
+        button.setImageResource(if (isRecording) R.drawable.ic_stop_recording else R.drawable.ic_record)
+        button.contentDescription = getString(if (isRecording) R.string.stop_recording else R.string.start_recording)
+    }
+
+    private fun stopRecording(showToast: Boolean) {
+        if (!isRecording) return
+
+        val player = recordingPlayer
+        val stopped = player != null && invokeRecordingApi(player, directory = null, enable = false)
+        isRecording = false
+        recordingPlayer = null
+        updateRecordingButton()
+
+        if (showToast) {
+            Toast.makeText(
+                this,
+                if (stopped) R.string.recording_stopped else R.string.recording_failed,
+                if (stopped) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+            ).show()
+        } else if (!stopped) {
+            Log.w(TAG, "LibVLC did not confirm that recording stopped")
+        }
+    }
+
+    /**
+     * VLC 3.x exposes record(String); VLC 4 exposes record(String, boolean).
+     * Resolve the available signature at runtime so either Gradle variant builds.
+     */
+    private fun invokeRecordingApi(player: MediaPlayer, directory: String?, enable: Boolean): Boolean {
+        return try {
+            val methods = player.javaClass.methods
+            val modern = methods.firstOrNull {
+                it.name == "record" && it.parameterTypes.size == 2 &&
+                        it.parameterTypes[0] == String::class.java &&
+                        it.parameterTypes[1] == java.lang.Boolean.TYPE
+            }
+            val result = if (modern != null) {
+                modern.invoke(player, directory, enable)
+            } else {
+                val legacy = methods.firstOrNull {
+                    it.name == "record" && it.parameterTypes.size == 1 &&
+                            it.parameterTypes[0] == String::class.java
+                } ?: return false
+                legacy.invoke(player, if (enable) directory else null)
+            }
+            result as? Boolean ?: true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to control LibVLC recording", e)
+            false
+        }
     }
 
     fun doPlayPause() {
