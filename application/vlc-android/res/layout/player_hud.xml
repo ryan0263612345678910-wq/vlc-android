@@ -343,7 +343,7 @@
                     android:clickable="true"
                     android:contentDescription="@string/start_recording"
                     android:focusable="true"
-                    android:onClick="@{player::toggleRecording}"
+                    android:onClick="@{(v) -> player.toggleRecording()}
                     android:scaleType="center"
                     android:visibility="gone"
                     tools:visibility="visible"
