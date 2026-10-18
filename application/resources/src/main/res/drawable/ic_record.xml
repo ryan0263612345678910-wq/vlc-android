@@ -4,6 +4,11 @@
     android:viewportWidth="36"
     android:viewportHeight="36">
     <path
+        android:fillColor="#00000000"
+        android:strokeColor="?attr/player_icon_color"
+        android:strokeWidth="3"
+        android:pathData="M18,4A14,14 0,1 0,18 32A14,14 0,1 0,18 4" />
+    <path
         android:fillColor="?attr/player_icon_color"
-        android:pathData="M18,4C10.268,4 4,10.268 4,18s6.268,14 14,14s14,-6.268 14,-14S25.732,4 18,4zM18,7C24.075,7 29,11.925 29,18S24.075,29 18,29S7,24.075 7,18S11.925,7 18,7zM18,11a7,7 0,1 0,0 14a7,7 0,1 0,0 -14z" />
+        android:pathData="M18,11A7,7 0,1 0,18 25A7,7 0,1 0,18 11" />
 </vector>
