@@ -1,6 +1,9 @@
 name: Android build
 
 on:
+  push:
+    branches:
+      - feature/hls-recording-button
   pull_request:
   workflow_dispatch:
 
