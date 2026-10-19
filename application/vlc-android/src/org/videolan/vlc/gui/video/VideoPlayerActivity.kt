@@ -1614,6 +1614,16 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
                     // leave audio running while the video becomes black.
                     if (event.voutCount > 0 && !isRecording)
                         service.mediaplayer.updateVideoSurfaces()
+                    else if (event.voutCount <= 0 && isRecording && service.isPlaying) {
+                        // A live seek may briefly drop the video output. Reattach
+                        // it after the transition rather than during the Vout event.
+                        handler.postDelayed({
+                            if (isRecording && service.isPlaying && service.videoTracksCount > 0 &&
+                                service.mediaplayer.voutCount <= 0) {
+                                service.mediaplayer.updateVideoSurfaces()
+                            }
+                        }, 700L)
+                    }
                     if (menuIdx == -1)
                         handleVout(event.voutCount)
                 }
@@ -1840,6 +1850,19 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
      */
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // While recording a live HLS stream, let touch gestures reveal controls
+        // but never let a single tap or a gesture toggle playback to pause.
+        if (isRecording && service?.isPlaying == true) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                        overlayDelegate.showOverlayTimeout(Settings.videoHudDelay * 1000)
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> return true
+            }
+        }
         return service != null && touchDelegate.onTouchEvent(event)
     }
 
@@ -2302,10 +2325,21 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
 
     internal fun seek(position: Long, length: Long, fromUser: Boolean = false, fast:Boolean = false) {
         service?.let { service ->
+            val wasPlaying = service.isPlaying
             forcedTime = position
             lastTime = service.getTime()
             service.seek(position, length.toDouble(), fromUser, fast)
             service.playlistManager.player.updateProgress(position)
+            // Seeking live HLS can recreate LibVLC's video output. Do not force
+            // a surface update while recording; wait for Vout to recover naturally.
+            if (isRecording && wasPlaying) {
+                handler.postDelayed({
+                    if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
+                        val player = service.mediaplayer
+                        if (player.voutCount <= 0) player.updateVideoSurfaces()
+                    }
+                }, 700L)
+            }
         }
     }
 
