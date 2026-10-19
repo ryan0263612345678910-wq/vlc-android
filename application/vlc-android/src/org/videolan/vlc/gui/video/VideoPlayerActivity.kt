@@ -29,6 +29,7 @@ import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothHeadset
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.ContentValues
 import android.content.DialogInterface
 import android.content.Intent
 import android.content.IntentFilter
@@ -46,6 +47,7 @@ import android.os.Looper
 import android.os.Message
 import android.os.Parcelable
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.DisplayMetrics
@@ -242,6 +244,8 @@ import org.videolan.vlc.util.share
 import org.videolan.vlc.viewmodels.BookmarkModel
 import org.videolan.vlc.viewmodels.PlaylistModel
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import kotlin.math.roundToInt
@@ -340,6 +344,7 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
     private var playbackStarted = false
     private var isRecording = false
     private var recordingPlayer: MediaPlayer? = null
+    private var recordingDirectory: File? = null
 
     // Navigation handling (DVD, Blu-Ray...)
     var menuIdx = -1
@@ -1476,6 +1481,12 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
 
 
     override fun togglePlayPause() {
+        // Ignore playback-toggle gestures while native recording is active.
+        // This also covers the overlay seekbar's separate click handler.
+        if (isRecording && service?.isPlaying == true) {
+            overlayDelegate.showOverlayTimeout(Settings.videoHudDelay * 1000)
+            return
+        }
         doPlayPause()
     }
 
@@ -1598,7 +1609,10 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
                 }
                 MediaPlayer.Event.Vout -> {
                     updateNavStatus()
-                    if (event.voutCount > 0)
+                    // Starting/stopping native recording may trigger Vout events.
+                    // Do not rebind the active surface during recording; that can
+                    // leave audio running while the video becomes black.
+                    if (event.voutCount > 0 && !isRecording)
                         service.mediaplayer.updateVideoSurfaces()
                     if (menuIdx == -1)
                         handleVout(event.voutCount)
@@ -2111,25 +2125,30 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
             return
         }
 
-        @Suppress("DEPRECATION")
-        val parent = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val directory = File(parent, "VLC Recordings")
-        if (!directory.isDirectory && !directory.mkdirs()) {
+        // Record in the app's writable external directory first. Android 10+
+        // restricts direct writes to public Downloads; publish the finished file
+        // to Downloads through MediaStore when recording stops.
+        val parent = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (parent == null) {
+            Toast.makeText(this, R.string.recording_directory_failed, Toast.LENGTH_LONG).show()
+            return
+        }
+        val directory = File(parent, "VLC Recordings/session-${System.currentTimeMillis()}")
+        if (!directory.mkdirs()) {
             Toast.makeText(this, R.string.recording_directory_failed, Toast.LENGTH_LONG).show()
             return
         }
 
         if (!invokeRecordingApi(currentPlayer, directory.absolutePath, enable = true)) {
+            directory.deleteRecursively()
             Toast.makeText(this, R.string.recording_failed, Toast.LENGTH_LONG).show()
             return
         }
 
+        recordingDirectory = directory
         isRecording = true
         recordingPlayer = currentPlayer
         updateRecordingButton()
-        // Do not call updateVideoSurfaces() here: forcing a video-surface refresh
-        // while LibVLC starts recording can detach the active output and leave
-        // playback audio/recording running with a black screen.
         rootView?.keepScreenOn = true
         Toast.makeText(this, R.string.recording_started, Toast.LENGTH_SHORT).show()
     }
@@ -2152,20 +2171,78 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
         if (!isRecording) return
 
         val player = recordingPlayer
+        val directory = recordingDirectory
         val stopped = player != null && invokeRecordingApi(player, directory = null, enable = false)
         isRecording = false
         recordingPlayer = null
+        recordingDirectory = null
         updateRecordingButton()
 
+        val published = if (stopped && directory != null) publishRecordingFiles(directory) else false
+        directory?.deleteRecursively()
         if (showToast) {
             Toast.makeText(
                 this,
-                if (stopped) R.string.recording_stopped else R.string.recording_failed,
-                if (stopped) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+                when {
+                    !stopped -> R.string.recording_failed
+                    published -> R.string.recording_stopped
+                    else -> R.string.recording_directory_failed
+                },
+                if (stopped && published) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
             ).show()
         } else if (!stopped) {
             Log.w(TAG, "LibVLC did not confirm that recording stopped")
         }
+    }
+
+    /**
+     * Publish completed native recording files to the public Downloads collection.
+     * MediaStore is required for reliable public Downloads access on Android 10+.
+     */
+    private fun publishRecordingFiles(directory: File): Boolean {
+        val files = directory.walkTopDown().filter { it.isFile && it.length() > 0L }.toList()
+        if (files.isEmpty()) {
+            Log.e(TAG, "LibVLC recording directory contains no output files: ${directory.absolutePath}")
+            return false
+        }
+        var allPublished = true
+        for (file in files) {
+            val mime = when (file.extension.lowercase()) {
+                "mp4" -> "video/mp4"
+                "mkv" -> "video/x-matroska"
+                "ts", "m2ts" -> "video/mp2t"
+                else -> "application/octet-stream"
+            }
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/VLC Recordings")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = try {
+                contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            } catch (e: Exception) {
+                Log.e(TAG, "Unable to create Downloads entry for ${file.name}", e)
+                null
+            }
+            if (uri == null) {
+                allPublished = false
+                continue
+            }
+            try {
+                contentResolver.openOutputStream(uri)?.use { output ->
+                    FileInputStream(file).use { input -> input.copyTo(output) }
+                } ?: throw IllegalStateException("Could not open Downloads output stream")
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                contentResolver.update(uri, values, null, null)
+            } catch (e: Exception) {
+                Log.e(TAG, "Unable to publish recording ${file.name}", e)
+                contentResolver.delete(uri, null, null)
+                allPublished = false
+            }
+        }
+        return allPublished
     }
 
     /**
