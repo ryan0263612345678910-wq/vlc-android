@@ -127,6 +127,14 @@ class VideoTouchDelegate(private val player: VideoPlayerActivity,
     private var isFirstBrightnessGesture = true
 
     fun onTouchEvent(event: MotionEvent): Boolean {// Mouse events for the core
+        // During recording, ignore player touch gestures that can toggle playback.
+        // The on-screen seekbar remains available for seeking to a live moment.
+        if (player.isRecordingActive) {
+            if (event.action == MotionEvent.ACTION_UP) {
+                player.overlayDelegate.toggleOverlay()
+            }
+            return true
+        }
         // Seek
 // Seek (Right or Left move)
         // No volume/brightness action if coef < 2 or a secondary display is connected
