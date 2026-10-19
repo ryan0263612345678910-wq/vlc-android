@@ -2097,8 +2097,7 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
 
     /**
      * Starts or stops LibVLC's native stream recording for HLS media.
-     * Recordings are written to the app-specific Movies directory, so no
-     * broad storage permission is required.
+     * Recordings are written under the public Downloads directory.
      */
     fun toggleRecording() {
         if (isRecording) {
@@ -2112,7 +2111,8 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
             return
         }
 
-        val parent = getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: File(filesDir, "Movies")
+        @Suppress("DEPRECATION")
+        val parent = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val directory = File(parent, "VLC Recordings")
         if (!directory.isDirectory && !directory.mkdirs()) {
             Toast.makeText(this, R.string.recording_directory_failed, Toast.LENGTH_LONG).show()
