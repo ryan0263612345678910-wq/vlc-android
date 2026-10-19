@@ -2127,6 +2127,9 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
         isRecording = true
         recordingPlayer = currentPlayer
         updateRecordingButton()
+        // Re-attach/update the video output after LibVLC switches into record mode.
+        service?.mediaplayer?.updateVideoSurfaces()
+        rootView?.keepScreenOn = true
         Toast.makeText(this, R.string.recording_started, Toast.LENGTH_SHORT).show()
     }
 
@@ -2196,6 +2199,12 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
 
     fun doPlayPause() {
         if (service?.isPausable != true) return
+        // Avoid accidental pauses from taps while recording an HLS stream.
+        // The recording needs playback to keep running until the user stops recording.
+        if (isRecording && service?.isPlaying == true) {
+            overlayDelegate.showOverlayTimeout(Settings.videoHudDelay * 1000)
+            return
+        }
         if (service?.isPlaying == true) {
             overlayDelegate.showOverlayTimeout(OVERLAY_INFINITE)
             pause()
