@@ -1611,17 +1611,20 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
                 }
                 MediaPlayer.Event.Vout -> {
                     updateNavStatus()
-                    // Rebind video output after Vout changes. During recording,
-                    // defer the refresh so native recording can finish its transition
-                    // and the seek operation can recreate the live video surface.
-                    if (event.voutCount > 0 && !isRecording) {
+                    // A live-HLS seek can destroy and recreate the video output.
+                    // Refresh as soon as LibVLC reports a valid output, including
+                    // during recording; delaying every positive Vout leaves the
+                    // SurfaceView black on streams that do not emit another Vout.
+                    if (event.voutCount > 0) {
                         service.mediaplayer.updateVideoSurfaces()
                     } else if (isRecording && service.isPlaying) {
+                        // If the output is temporarily absent during a seek, retry
+                        // after LibVLC has had time to rebuild the decoder/output.
                         handler.postDelayed({
                             if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
                                 service.mediaplayer.updateVideoSurfaces()
                             }
-                        }, if (event.voutCount <= 0) 700L else 350L)
+                        }, 900L)
                     }
                     if (menuIdx == -1)
                         handleVout(event.voutCount)
@@ -2329,14 +2332,20 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
             lastTime = service.getTime()
             service.seek(position, length.toDouble(), fromUser, fast)
             service.playlistManager.player.updateProgress(position)
-            // Seeking live HLS can recreate LibVLC's video output. Do not force
-            // a surface update while recording; wait for Vout to recover naturally.
+            // Seeking live HLS while recording may recreate LibVLC's decoder
+            // output without a reliable follow-up Vout event. Refresh the attached
+            // surfaces after the seek settles, with a second recovery attempt.
             if (isRecording && wasPlaying) {
                 handler.postDelayed({
                     if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
                         service.mediaplayer.updateVideoSurfaces()
                     }
-                }, 700L)
+                }, 350L)
+                handler.postDelayed({
+                    if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
+                        service.mediaplayer.updateVideoSurfaces()
+                    }
+                }, 1100L)
             }
         }
     }
