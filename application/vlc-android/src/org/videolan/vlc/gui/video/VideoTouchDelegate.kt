@@ -130,8 +130,11 @@ class VideoTouchDelegate(private val player: VideoPlayerActivity,
         // During recording, ignore player touch gestures that can toggle playback.
         // The on-screen seekbar remains available for seeking to a live moment.
         if (player.isRecordingActive) {
-            if (event.action == MotionEvent.ACTION_UP) {
-                player.overlayDelegate.toggleOverlay()
+            // Do not route taps or double-taps into the normal gesture handler
+            // while recording: that handler can toggle playback on ACTION_UP.
+            // Controls remain clickable because their own views handle touch.
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                player.overlayDelegate.showOverlayTimeout(org.videolan.tools.Settings.videoHudDelay * 1000)
             }
             return true
         }
