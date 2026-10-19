@@ -1618,8 +1618,7 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
                         // A live seek may briefly drop the video output. Reattach
                         // it after the transition rather than during the Vout event.
                         handler.postDelayed({
-                            if (isRecording && service.isPlaying && service.videoTracksCount > 0 &&
-                                service.mediaplayer.voutCount <= 0) {
+                            if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
                                 service.mediaplayer.updateVideoSurfaces()
                             }
                         }, 700L)
@@ -2335,8 +2334,7 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
             if (isRecording && wasPlaying) {
                 handler.postDelayed({
                     if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
-                        val player = service.mediaplayer
-                        if (player.voutCount <= 0) player.updateVideoSurfaces()
+                        service.mediaplayer.updateVideoSurfaces()
                     }
                 }, 700L)
             }
