@@ -343,6 +343,8 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
      */
     private var playbackStarted = false
     private var isRecording = false
+    internal val isRecordingActive: Boolean
+        get() = isRecording
     private var recordingPlayer: MediaPlayer? = null
     private var recordingDirectory: File? = null
 
@@ -1609,19 +1611,17 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
                 }
                 MediaPlayer.Event.Vout -> {
                     updateNavStatus()
-                    // Starting/stopping native recording may trigger Vout events.
-                    // Do not rebind the active surface during recording; that can
-                    // leave audio running while the video becomes black.
-                    if (event.voutCount > 0 && !isRecording)
+                    // Rebind video output after Vout changes. During recording,
+                    // defer the refresh so native recording can finish its transition
+                    // and the seek operation can recreate the live video surface.
+                    if (event.voutCount > 0 && !isRecording) {
                         service.mediaplayer.updateVideoSurfaces()
-                    else if (event.voutCount <= 0 && isRecording && service.isPlaying) {
-                        // A live seek may briefly drop the video output. Reattach
-                        // it after the transition rather than during the Vout event.
+                    } else if (isRecording && service.isPlaying) {
                         handler.postDelayed({
                             if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
                                 service.mediaplayer.updateVideoSurfaces()
                             }
-                        }, 700L)
+                        }, if (event.voutCount <= 0) 700L else 350L)
                     }
                     if (menuIdx == -1)
                         handleVout(event.voutCount)
