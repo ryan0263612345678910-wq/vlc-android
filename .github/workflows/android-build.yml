@@ -49,7 +49,19 @@ jobs:
             exit 1
           fi
           yes | "$SDKMANAGER" --licenses || true
-          "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          # Large SDK downloads can be truncated on hosted runners. Retry and
+          # clear partial downloads before each attempt to avoid a corrupt NDK ZIP.
+          for attempt in 1 2 3 4; do
+            if "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"; then
+              echo "Android SDK packages installed successfully on attempt $attempt"
+              exit 0
+            fi
+            echo "::warning::Android SDK installation failed on attempt $attempt"
+            rm -rf "$ANDROID_HOME/.temp" "$ANDROID_HOME/.downloadIntermediates" "$ANDROID_HOME/ndk/28.2.13676358"
+            if [ "$attempt" -lt 4 ]; then sleep $((attempt * 10)); fi
+          done
+          echo "::error::Android SDK installation failed after 4 attempts"
+          exit 1
 
       - name: Create local Android SDK configuration
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
