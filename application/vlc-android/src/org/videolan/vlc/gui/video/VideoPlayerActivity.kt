@@ -29,6 +29,7 @@ import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothHeadset
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.ContentValues
 import android.content.DialogInterface
 import android.content.Intent
 import android.content.IntentFilter
@@ -40,11 +41,13 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.os.Parcelable
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.DisplayMetrics
@@ -241,6 +244,8 @@ import org.videolan.vlc.util.share
 import org.videolan.vlc.viewmodels.BookmarkModel
 import org.videolan.vlc.viewmodels.PlaylistModel
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import kotlin.math.roundToInt
@@ -337,6 +342,11 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
      * (e.g. lock screen, or to restore the pause state)
      */
     private var playbackStarted = false
+    private var isRecording = false
+    internal val isRecordingActive: Boolean
+        get() = isRecording
+    private var recordingPlayer: MediaPlayer? = null
+    private var recordingDirectory: File? = null
 
     // Navigation handling (DVD, Blu-Ray...)
     var menuIdx = -1
@@ -964,6 +974,7 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
 
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
     override fun onStop() {
+        stopRecording(showToast = false)
         super.onStop()
         service?.playlistManager?.let {
             savedMediaList = ArrayList(it.getMediaList())
@@ -1020,6 +1031,7 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
     }
 
     override fun onDestroy() {
+        stopRecording(showToast = false)
         super.onDestroy()
         playlistModel?.run {
             dataset.removeObserver(playlistObserver)
@@ -1471,6 +1483,12 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
 
 
     override fun togglePlayPause() {
+        // Ignore playback-toggle gestures while native recording is active.
+        // This also covers the overlay seekbar's separate click handler.
+        if (isRecording && service?.isPlaying == true) {
+            overlayDelegate.showOverlayTimeout(Settings.videoHudDelay * 1000)
+            return
+        }
         doPlayPause()
     }
 
@@ -1577,9 +1595,14 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
     override fun onMediaPlayerEvent(event: MediaPlayer.Event) {
         service?.let { service ->
             when (event.type) {
-                MediaPlayer.Event.Playing -> onPlaying()
+                MediaPlayer.Event.Playing -> {
+                    onPlaying()
+                    updateRecordingButton()
+                }
                 MediaPlayer.Event.Paused -> overlayDelegate.updateOverlayPausePlay()
                 MediaPlayer.Event.Opening -> {
+                    stopRecording(showToast = false)
+                    updateRecordingButton()
                     forcedTime = -1
                     if (!subtitlesExtraPath.isNullOrEmpty()) {
                         service.addSubtitleTrack(subtitlesExtraPath!!, true)
@@ -1588,8 +1611,21 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
                 }
                 MediaPlayer.Event.Vout -> {
                     updateNavStatus()
-                    if (event.voutCount > 0)
+                    // A live-HLS seek can destroy and recreate the video output.
+                    // Refresh as soon as LibVLC reports a valid output, including
+                    // during recording; delaying every positive Vout leaves the
+                    // SurfaceView black on streams that do not emit another Vout.
+                    if (event.voutCount > 0) {
                         service.mediaplayer.updateVideoSurfaces()
+                    } else if (isRecording && service.isPlaying) {
+                        // If the output is temporarily absent during a seek, retry
+                        // after LibVLC has had time to rebuild the decoder/output.
+                        handler.postDelayed({
+                            if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
+                                service.mediaplayer.updateVideoSurfaces()
+                            }
+                        }, 900L)
+                    }
                     if (menuIdx == -1)
                         handleVout(event.voutCount)
                 }
@@ -1816,6 +1852,19 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
      */
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // While recording a live HLS stream, let touch gestures reveal controls
+        // but never let a single tap or a gesture toggle playback to pause.
+        if (isRecording && service?.isPlaying == true) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                        overlayDelegate.showOverlayTimeout(Settings.videoHudDelay * 1000)
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> return true
+            }
+        }
         return service != null && touchDelegate.onTouchEvent(event)
     }
 
@@ -2085,8 +2134,180 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
         if (menuIdx >= 0) service?.titleIdx = menuIdx
     }
 
+    /**
+     * Starts or stops LibVLC's native stream recording for HLS media.
+     * Recordings are written under the public Downloads directory.
+     */
+    fun toggleRecording() {
+        if (isRecording) {
+            stopRecording(showToast = true)
+            return
+        }
+
+        val currentPlayer = service?.mediaplayer
+        if (currentPlayer == null || !isCurrentMediaHls()) {
+            Toast.makeText(this, R.string.recording_hls_only, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Record in the app's writable external directory first. Android 10+
+        // restricts direct writes to public Downloads; publish the finished file
+        // to Downloads through MediaStore when recording stops.
+        val parent = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (parent == null) {
+            Toast.makeText(this, R.string.recording_directory_failed, Toast.LENGTH_LONG).show()
+            return
+        }
+        val directory = File(parent, "VLC Recordings/session-${System.currentTimeMillis()}")
+        if (!directory.mkdirs()) {
+            Toast.makeText(this, R.string.recording_directory_failed, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        if (!invokeRecordingApi(currentPlayer, directory.absolutePath, enable = true)) {
+            directory.deleteRecursively()
+            Toast.makeText(this, R.string.recording_failed, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        recordingDirectory = directory
+        isRecording = true
+        recordingPlayer = currentPlayer
+        updateRecordingButton()
+        rootView?.keepScreenOn = true
+        Toast.makeText(this, R.string.recording_started, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun isCurrentMediaHls(): Boolean {
+        val location = service?.currentMediaWrapper?.uri?.toString() ?: return false
+        val path = location.substringBefore('?').substringBefore('#')
+        return path.endsWith(".m3u8", ignoreCase = true)
+    }
+
+    private fun updateRecordingButton() {
+        val button = findViewById<ImageView>(R.id.player_overlay_record) ?: return
+        button.visibility = if (isCurrentMediaHls()) View.VISIBLE else View.GONE
+        button.isActivated = isRecording
+        button.setImageResource(if (isRecording) R.drawable.ic_stop_recording else R.drawable.ic_record)
+        button.contentDescription = getString(if (isRecording) R.string.stop_recording else R.string.start_recording)
+    }
+
+    private fun stopRecording(showToast: Boolean) {
+        if (!isRecording) return
+
+        val player = recordingPlayer
+        val directory = recordingDirectory
+        val stopped = player != null && invokeRecordingApi(player, directory = null, enable = false)
+        isRecording = false
+        recordingPlayer = null
+        recordingDirectory = null
+        updateRecordingButton()
+
+        val published = if (stopped && directory != null) publishRecordingFiles(directory) else false
+        directory?.deleteRecursively()
+        if (showToast) {
+            Toast.makeText(
+                this,
+                when {
+                    !stopped -> R.string.recording_failed
+                    published -> R.string.recording_stopped
+                    else -> R.string.recording_directory_failed
+                },
+                if (stopped && published) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+            ).show()
+        } else if (!stopped) {
+            Log.w(TAG, "LibVLC did not confirm that recording stopped")
+        }
+    }
+
+    /**
+     * Publish completed native recording files to the public Downloads collection.
+     * MediaStore is required for reliable public Downloads access on Android 10+.
+     */
+    private fun publishRecordingFiles(directory: File): Boolean {
+        val files = directory.walkTopDown().filter { it.isFile && it.length() > 0L }.toList()
+        if (files.isEmpty()) {
+            Log.e(TAG, "LibVLC recording directory contains no output files: ${directory.absolutePath}")
+            return false
+        }
+        var allPublished = true
+        for (file in files) {
+            val mime = when (file.extension.lowercase()) {
+                "mp4" -> "video/mp4"
+                "mkv" -> "video/x-matroska"
+                "ts", "m2ts" -> "video/mp2t"
+                else -> "application/octet-stream"
+            }
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/VLC Recordings")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = try {
+                contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            } catch (e: Exception) {
+                Log.e(TAG, "Unable to create Downloads entry for ${file.name}", e)
+                null
+            }
+            if (uri == null) {
+                allPublished = false
+                continue
+            }
+            try {
+                contentResolver.openOutputStream(uri)?.use { output ->
+                    FileInputStream(file).use { input -> input.copyTo(output) }
+                } ?: throw IllegalStateException("Could not open Downloads output stream")
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                contentResolver.update(uri, values, null, null)
+            } catch (e: Exception) {
+                Log.e(TAG, "Unable to publish recording ${file.name}", e)
+                contentResolver.delete(uri, null, null)
+                allPublished = false
+            }
+        }
+        return allPublished
+    }
+
+    /**
+     * VLC 3.x exposes record(String); VLC 4 exposes record(String, boolean).
+     * Resolve the available signature at runtime so either Gradle variant builds.
+     */
+    private fun invokeRecordingApi(player: MediaPlayer, directory: String?, enable: Boolean): Boolean {
+        return try {
+            val methods = player.javaClass.methods
+            val modern = methods.firstOrNull {
+                it.name == "record" && it.parameterTypes.size == 2 &&
+                        it.parameterTypes[0] == String::class.java &&
+                        it.parameterTypes[1] == java.lang.Boolean.TYPE
+            }
+            val result = if (modern != null) {
+                modern.invoke(player, directory, enable)
+            } else {
+                val legacy = methods.firstOrNull {
+                    it.name == "record" && it.parameterTypes.size == 1 &&
+                            it.parameterTypes[0] == String::class.java
+                } ?: return false
+                legacy.invoke(player, if (enable) directory else null)
+            }
+            // Do not report success when the API returns void/null: that only means
+            // reflection invoked a method, not that LibVLC started recording.
+            result is Boolean && result
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to control LibVLC recording", e)
+            false
+        }
+    }
+
     fun doPlayPause() {
         if (service?.isPausable != true) return
+        // Avoid accidental pauses from taps while recording an HLS stream.
+        // The recording needs playback to keep running until the user stops recording.
+        if (isRecording && service?.isPlaying == true) {
+            overlayDelegate.showOverlayTimeout(Settings.videoHudDelay * 1000)
+            return
+        }
         if (service?.isPlaying == true) {
             overlayDelegate.showOverlayTimeout(OVERLAY_INFINITE)
             pause()
@@ -2106,10 +2327,26 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
 
     internal fun seek(position: Long, length: Long, fromUser: Boolean = false, fast:Boolean = false) {
         service?.let { service ->
+            val wasPlaying = service.isPlaying
             forcedTime = position
             lastTime = service.getTime()
             service.seek(position, length.toDouble(), fromUser, fast)
             service.playlistManager.player.updateProgress(position)
+            // Seeking live HLS while recording may recreate LibVLC's decoder
+            // output without a reliable follow-up Vout event. Refresh the attached
+            // surfaces after the seek settles, with a second recovery attempt.
+            if (isRecording && wasPlaying) {
+                handler.postDelayed({
+                    if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
+                        service.mediaplayer.updateVideoSurfaces()
+                    }
+                }, 350L)
+                handler.postDelayed({
+                    if (isRecording && service.isPlaying && service.videoTracksCount > 0) {
+                        service.mediaplayer.updateVideoSurfaces()
+                    }
+                }, 1100L)
+            }
         }
     }
 

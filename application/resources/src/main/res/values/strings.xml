@@ -1014,6 +1014,13 @@
     <string name="demux_bitrate">Demux bitrate</string>
     <string name="input_bitrate">Input bitrate</string>
     <string name="video_information">Video information</string>
+    <string name="start_recording">Start recording</string>
+    <string name="stop_recording">Stop recording</string>
+    <string name="recording_started">Recording started. Saved in VLC Recordings.</string>
+    <string name="recording_stopped">Recording stopped.</string>
+    <string name="recording_hls_only">Recording is available for HLS (.m3u8) streams only.</string>
+    <string name="recording_failed">Could not start or stop recording.</string>
+    <string name="recording_directory_failed">Could not create the recording folder.</string>
 
     <string name="channels">Channels</string>
     <string name="resolution">Resolution</string>
