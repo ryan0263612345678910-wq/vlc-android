@@ -2127,8 +2127,9 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback, 
         isRecording = true
         recordingPlayer = currentPlayer
         updateRecordingButton()
-        // Re-attach/update the video output after LibVLC switches into record mode.
-        service?.mediaplayer?.updateVideoSurfaces()
+        // Do not call updateVideoSurfaces() here: forcing a video-surface refresh
+        // while LibVLC starts recording can detach the active output and leave
+        // playback audio/recording running with a black screen.
         rootView?.keepScreenOn = true
         Toast.makeText(this, R.string.recording_started, Toast.LENGTH_SHORT).show()
     }
